@@ -1,17 +1,29 @@
 package main
 
 import (
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/moby/go-archive"
+	"github.com/moby/go-archive/compression"
 )
 
 func main() {
 	volumeID := os.Getenv("RAILWAY_VOLUME_ID")
 	volumeName := os.Getenv("RAILWAY_VOLUME_NAME")
 	volumeMountPath := os.Getenv("RAILWAY_VOLUME_MOUNT_PATH")
+
+	downloadLink := os.Getenv("TARBALL_URL")
+	if downloadLink == "" {
+		slog.Error("TARBALL_URL not set, aborting...")
+		os.Exit(1)
+	}
 
 	if volumeID == "" {
 		slog.Error("Volume ID not set, do you have a volume attached? Aborting...")
@@ -58,6 +70,50 @@ func main() {
 	}
 
 	slog.Info("ready to unpack data to volume", "volume_id", volumeID, "volume_name", volumeName, "volume_mount_path", volumeMountPath)
-	time.Sleep(time.Second * 10000)
 
+	req, err := http.Get(downloadLink)
+	if err != nil {
+		slog.Error("failed to download tarball", "url", downloadLink, "error", err)
+		os.Exit(5)
+	}
+
+	body := req.Body
+	decompressStream, err := compression.DecompressStream(body)
+	if err != nil {
+		slog.Error("failed to decompress tarball", "url", downloadLink, "error", err)
+		os.Exit(6)
+	}
+
+	mr := &meteredReader{
+		counter: &atomic.Int64{},
+		source:  decompressStream,
+	}
+
+	done := &atomic.Bool{}
+
+	go func() {
+		for done.Load() == false {
+			time.Sleep(time.Second * 5)
+			slog.Info("unpacking to disk", "bytes", mr.counter.Load())
+		}
+	}()
+
+	if err := archive.Unpack(mr, volumeMountPath, &archive.TarOptions{}); err != nil {
+		slog.Error("failed to unpack tarball", "url", downloadLink, "error", err)
+		os.Exit(7)
+	}
+
+	done.Store(true)
+	os.Exit(0)
+}
+
+type meteredReader struct {
+	counter *atomic.Int64
+	source  io.Reader
+}
+
+func (mr *meteredReader) Read(p []byte) (n int, err error) {
+	n, err = mr.source.Read(p)
+	mr.counter.Add(int64(n))
+	return n, err
 }
