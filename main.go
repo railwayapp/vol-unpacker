@@ -57,6 +57,7 @@ func main() {
 		os.Exit(4)
 	}
 
+	slog.Info("ready to unpack data to volume", "volume_id", volumeID, "volume_name", volumeName, "volume_mount_path", volumeMountPath)
 	time.Sleep(time.Second * 10000)
 
 }
