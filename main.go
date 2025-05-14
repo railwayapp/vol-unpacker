@@ -104,6 +104,7 @@ func main() {
 	}
 
 	done.Store(true)
+	slog.Info("successfully unpacked volume data", "volume_id", volumeID, "volume_name", volumeName, "volume_mount_path", volumeMountPath, "bytes_processed", mr.counter.Load())
 	os.Exit(0)
 }
 
